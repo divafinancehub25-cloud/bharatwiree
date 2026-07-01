@@ -1,0 +1,367 @@
+// =============================================================================
+//  News Distribution & Licensing Platform — Database Design (Phase 0)
+// =============================================================================
+//  Plain-English guide: each "model" below is one TABLE in the database.
+//  Each table stores one kind of thing (a User, an Article, a Licence...).
+//  Lines with "//" are notes for humans and are ignored by the computer.
+//  Nothing here is final — we review together, then create the tables.
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  // Connection URL lives in prisma.config.ts (Prisma 7 requirement).
+  provider = "postgresql"
+}
+
+// -----------------------------------------------------------------------------
+//  ENUMS = fixed lists of allowed values (like a dropdown with set options)
+// -----------------------------------------------------------------------------
+
+// Who someone is in the system.
+enum Role {
+  SUPER_ADMIN // you — full control
+  ADMIN // manages content/users (no billing/owner powers)
+  EDITOR // reviews & approves articles before publishing
+  JOURNALIST // in-house writer (submits, can't publish directly)
+  READER // public app user (free or premium)
+  PUBLISHER_PARTNER // independent journalist/outlet who earns a revenue share
+}
+
+// Where an article is in its life. Only PUBLISHED articles are visible/sellable.
+// Automated pipeline puts AI articles into IN_REVIEW → staff 1-click approve → PUBLISHED.
+enum ArticleStatus {
+  DRAFT
+  IN_REVIEW
+  PUBLISHED
+  ARCHIVED
+}
+
+// How the article was produced.
+enum ContentSource {
+  MANUAL // written by our team / partner
+  RSS_AI // AI rewrote it from RSS sources into original wording
+}
+
+// THE LEGAL SAFETY TAG. Controls what an article is allowed to be used for.
+// The app will physically block selling anything that is not sellable.
+enum RightsStatus {
+  OWN_SELLABLE // we wrote it — can sell to agencies + license to AI
+  PARTNER_LICENSED // a partner gave us resale rights — can sell, partner gets a share
+  AI_LICENSABLE // explicitly cleared for AI-company licensing
+  DISPLAY_ONLY // aggregated/borrowed — show summary to readers only, NEVER sell
+}
+
+// The type of customer/organisation that buys content.
+enum BuyerType {
+  AGENCY // another news agency (mostly WordPress users)
+  AI // an AI company / LLM crawler
+}
+
+// Approval state for any external organisation.
+enum OrgStatus {
+  PENDING // signed up, waiting for Super Admin approval
+  APPROVED
+  SUSPENDED
+}
+
+// Who a subscription/plan is meant for.
+enum Audience {
+  READER
+  AGENCY
+  AI
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE // payment failed, retrying
+  CANCELLED
+  EXPIRED
+}
+
+// How a licensed article was delivered to the buyer.
+enum DeliveryChannel {
+  PORTAL // downloaded from the web portal
+  WORDPRESS // auto-pushed into their WordPress site via our plugin
+  API // pulled via the AI/agency API
+}
+
+// Money movements for partners and the platform.
+enum LedgerType {
+  PARTNER_SHARE // money owed to a publisher partner
+  PLATFORM_COMMISSION // our cut
+}
+
+enum LedgerStatus {
+  PENDING
+  PAID
+}
+
+// =============================================================================
+//  PEOPLE & ORGANISATIONS
+// =============================================================================
+
+// Every individual person who logs in (staff, readers, partners).
+model User {
+  id           String   @id @default(cuid())
+  role         Role     @default(READER)
+  name         String?
+  email        String?  @unique
+  phone        String?  @unique // readers log in by phone OTP (MSG91)
+  passwordHash String? // staff/partners use password; readers use OTP
+  languagePref String? // preferred reading language code, e.g. "hi"
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Things this person is linked to:
+  authoredArticles Article[]         @relation("ArticleAuthor")
+  partnerProfile   PublisherPartner? // set only if role = PUBLISHER_PARTNER
+  subscriptions    Subscription[] // a reader's premium subscriptions
+  auditLogs        AuditLog[]
+}
+
+// Extra details for a Publisher Partner (links 1-to-1 to a User).
+model PublisherPartner {
+  id           String    @id @default(cuid())
+  user         User      @relation(fields: [userId], references: [id])
+  userId       String    @unique
+  outletName   String? // their publication's name, if any
+  revenueShare Float     @default(0.5) // their cut (0.5 = 50%) when content is licensed
+  status       OrgStatus @default(PENDING)
+  createdAt    DateTime  @default(now())
+
+  articles      Article[]     @relation("ArticlePartner")
+  ledgerEntries LedgerEntry[]
+}
+
+// A buying organisation: either a news AGENCY or an AI company.
+model Buyer {
+  id           String    @id @default(cuid())
+  type         BuyerType
+  name         String
+  contactEmail String?
+  status       OrgStatus @default(PENDING) // Super Admin approves before access
+  createdAt    DateTime  @default(now())
+
+  apiKeys       ApiKey[]
+  subscriptions Subscription[]
+  licences      Licence[]
+  wpInstalls    WordPressInstall[] // only relevant for AGENCY buyers
+}
+
+// =============================================================================
+//  CONTENT
+// =============================================================================
+
+model Language {
+  id       String    @id @default(cuid())
+  code     String    @unique // "en", "hi", "bho", "mr"...
+  name     String // "English", "Hindi", "Bhojpuri"...
+  isActive Boolean   @default(true)
+  articles Article[]
+}
+
+model Category {
+  id       String     @id @default(cuid())
+  name     String
+  slug     String     @unique
+  parentId String? // for sub-categories (optional)
+  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children Category[] @relation("CategoryTree")
+  articles Article[]
+}
+
+// THE CORE TABLE. One row = one news article.
+model Article {
+  id         String  @id @default(cuid())
+  title      String
+  slug       String  @unique
+  excerpt    String? // short summary (also used for DISPLAY_ONLY items)
+  body       String? // full text (empty for display-only/aggregated items)
+  coverImage String? // S3 image URL
+  sourceUrl  String? // for DISPLAY_ONLY: link back to original source
+
+  status ArticleStatus @default(DRAFT)
+  rights RightsStatus  @default(OWN_SELLABLE) // the legal safety tag
+
+  // --- AUTOMATED PIPELINE (RSS → AI rewrite → image → SEO)
+  contentSource ContentSource @default(MANUAL)
+  aiModel       String? // which AI model rewrote it (e.g. "claude-...")
+  aiRewritten   Boolean       @default(false)
+  imageIsAi     Boolean       @default(false) // true = show "AI-generated" label on image
+  rssSource     RssSource?    @relation(fields: [rssSourceId], references: [id])
+  rssSourceId   String?
+
+  // --- SEO (top-level search visibility)
+  metaTitle       String? // custom <title> for search engines
+  metaDescription String? // search snippet
+  // (Google News "NewsArticle" structured data is generated at render time
+  //  from these fields + author/publishedAt — no extra columns needed.)
+
+  // Relationships
+  language   Language          @relation(fields: [languageId], references: [id])
+  languageId String
+  category   Category          @relation(fields: [categoryId], references: [id])
+  categoryId String
+  author     User?             @relation("ArticleAuthor", fields: [authorId], references: [id])
+  authorId   String?
+  partner    PublisherPartner? @relation("ArticlePartner", fields: [partnerId], references: [id])
+  partnerId  String?
+
+  // Pricing for B2B / B2AI (null = use the plan/subscription price instead)
+  priceAgency Int? // one-off agency licence price, in paise
+  priceAi     Int? // AI per-fetch price, in paise
+
+  // --- PROVENANCE (C2PA authenticity) — proves the article is real & untampered
+  contentHash        String? // fingerprint of the content at publish time
+  provenanceManifest Json? // the signed C2PA "content credentials" record
+  signedAt           DateTime?
+
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  assets   Asset[]
+  licences Licence[]
+
+  @@index([status, rights])
+  @@index([categoryId])
+  @@index([languageId])
+}
+
+// Extra images/files attached to an article.
+model Asset {
+  id        String   @id @default(cuid())
+  article   Article  @relation(fields: [articleId], references: [id])
+  articleId String
+  url       String // S3 URL
+  kind      String   @default("image")
+  createdAt DateTime @default(now())
+}
+
+// A news RSS feed we pull from. A scheduled job fetches these regularly,
+// then AI rewrites each item into an original article (status = IN_REVIEW).
+model RssSource {
+  id                String    @id @default(cuid())
+  name              String // e.g. "PTI Sports", "Local Hindi Feed"
+  feedUrl           String    @unique
+  isActive          Boolean   @default(true)
+  defaultCategoryId String? // where to file articles from this feed
+  defaultLanguageId String?
+  lastFetchedAt     DateTime?
+  createdAt         DateTime  @default(now())
+
+  articles Article[]
+}
+
+// =============================================================================
+//  MONEY: PLANS, SUBSCRIPTIONS, LICENCES, PAYOUTS
+// =============================================================================
+
+// A pricing plan (reader premium, agency tier, or AI tier).
+model Plan {
+  id           String   @id @default(cuid())
+  name         String
+  audience     Audience
+  priceInr     Int // price in paise (e.g. 9900 = ₹99)
+  intervalDays Int      @default(30) // billing period length
+  features     Json? // what the plan includes (categories, limits...)
+  isActive     Boolean  @default(true)
+
+  subscriptions Subscription[]
+}
+
+// An active paid relationship. Belongs to EITHER a reader (user) OR a buyer org.
+model Subscription {
+  id               String             @id @default(cuid())
+  plan             Plan               @relation(fields: [planId], references: [id])
+  planId           String
+  status           SubscriptionStatus @default(ACTIVE)
+  currentPeriodEnd DateTime?
+  razorpaySubId    String? // Razorpay subscription id
+
+  user    User?   @relation(fields: [userId], references: [id]) // reader premium
+  userId  String?
+  buyer   Buyer?  @relation(fields: [buyerId], references: [id]) // agency/AI
+  buyerId String?
+
+  createdAt DateTime @default(now())
+}
+
+// THE LEGAL PROOF: a record every time a buyer licenses an article.
+model Licence {
+  id           String          @id @default(cuid())
+  article      Article         @relation(fields: [articleId], references: [id])
+  articleId    String
+  buyer        Buyer           @relation(fields: [buyerId], references: [id])
+  buyerId      String
+  channel      DeliveryChannel
+  priceCharged Int // in paise
+  watermarkRef String? // reference to the watermarked copy delivered
+  licensedAt   DateTime        @default(now())
+
+  ledgerEntries LedgerEntry[]
+}
+
+// Money owed: partner shares and platform commission, per licence.
+model LedgerEntry {
+  id        String            @id @default(cuid())
+  type      LedgerType
+  amount    Int // in paise
+  status    LedgerStatus      @default(PENDING)
+  licence   Licence?          @relation(fields: [licenceId], references: [id])
+  licenceId String?
+  partner   PublisherPartner? @relation(fields: [partnerId], references: [id])
+  partnerId String?
+  createdAt DateTime          @default(now())
+}
+
+// =============================================================================
+//  ACCESS & DELIVERY (API keys + WordPress plugin)
+// =============================================================================
+
+// API keys let agencies/AI buyers (and the WordPress plugin) pull content.
+model ApiKey {
+  id         String    @id @default(cuid())
+  buyer      Buyer     @relation(fields: [buyerId], references: [id])
+  buyerId    String
+  label      String?
+  hashedKey  String    @unique // we store only a hash, never the raw key
+  scopes     String[] // what this key may access
+  rateLimit  Int       @default(1000) // requests/day
+  requestCount Int     @default(0) // pay-per-fetch usage meter
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+}
+
+// Registration of an agency's WordPress site that uses our plugin.
+model WordPressInstall {
+  id                   String    @id @default(cuid())
+  buyer                Buyer     @relation(fields: [buyerId], references: [id])
+  buyerId              String
+  siteUrl              String
+  subscribedCategories String[] // category slugs they pull
+  subscribedLanguages  String[]
+  autoPublish          Boolean   @default(false) // false = land as DRAFT for their review
+  lastSyncAt           DateTime?
+  createdAt            DateTime  @default(now())
+}
+
+// =============================================================================
+//  AUDIT TRAIL — records who did what (publishing, approving, licensing...)
+// =============================================================================
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actor      User?    @relation(fields: [actorId], references: [id])
+  actorId    String?
+  action     String // e.g. "ARTICLE_PUBLISHED", "LICENCE_CREATED"
+  entityType String?
+  entityId   String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+}
