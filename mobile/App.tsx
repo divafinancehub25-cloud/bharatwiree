@@ -20,7 +20,7 @@ import {
  *  - Phone on same WiFi: http://<your-laptop-IP>:3000  (e.g. http://192.168.1.5:3000)
  *  - After deploy:       https://your-site.vercel.app
  */
-const API_BASE = "http://10.0.2.2:3000";
+const API_BASE = "https://bharatwiree.vercel.app";
 
 type Article = {
   id: string;
