@@ -92,24 +92,35 @@ async function rewriteWithGemini(input: RewriteInput): Promise<RewriteOutput> {
     `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent` +
     `?key=${process.env.GEMINI_API_KEY}`;
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: buildPrompt(input) }] }],
-      generationConfig: { responseMimeType: "application/json", temperature: 0.7 },
-    }),
-  });
+  // Free tier allows ~10 requests/min — on 429 (rate limit) or 503 (overloaded),
+  // wait and retry a couple of times instead of failing the article.
+  let lastErr = "";
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: buildPrompt(input) }] }],
+        generationConfig: { responseMimeType: "application/json", temperature: 0.7 },
+      }),
+    });
 
-  if (!res.ok) {
-    throw new Error(`Gemini error ${res.status}: ${await res.text()}`);
+    if (res.ok) {
+      const data = (await res.json()) as {
+        candidates?: { content?: { parts?: { text?: string }[] } }[];
+      };
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+      return shape(safeParse(text), input, `gemini:${GEMINI_MODEL}`);
+    }
+
+    lastErr = `Gemini error ${res.status}: ${(await res.text()).slice(0, 200)}`;
+    if ((res.status === 429 || res.status === 503) && attempt < 3) {
+      await new Promise((r) => setTimeout(r, 15000 * attempt)); // 15s, then 30s
+      continue;
+    }
+    break;
   }
-
-  const data = (await res.json()) as {
-    candidates?: { content?: { parts?: { text?: string }[] } }[];
-  };
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-  return shape(safeParse(text), input, `gemini:${GEMINI_MODEL}`);
+  throw new Error(lastErr);
 }
 
 // ---------------------------------------------------------------------------

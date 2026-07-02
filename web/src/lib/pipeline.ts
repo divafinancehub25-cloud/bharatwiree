@@ -56,6 +56,8 @@ export async function runPipeline(): Promise<PipelineResult> {
         }
 
         const raw = item.contentSnippet || item.content || item.title || "";
+        // small gap between AI calls — keeps us under Gemini free-tier 10 req/min
+        await new Promise((r) => setTimeout(r, 4000));
         const ai = await rewriteArticle({
           title: item.title ?? "Untitled",
           content: raw,
