@@ -12,7 +12,7 @@ const OLLAMA_URL = process.env.OLLAMA_URL ?? "http://localhost:11434";
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? "llama3.2:1b";
 
 // FREE cloud tier — no laptop RAM needed, good Hindi.
-const GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-2.0-flash";
+const GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
 
 // FUTURE: cheap, high-quality model for production rewriting.
 const CLAUDE_MODEL = process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001";
