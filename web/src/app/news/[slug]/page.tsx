@@ -5,7 +5,9 @@ import { prisma } from "@/lib/prisma";
 
 type Params = { params: Promise<{ slug: string }> };
 
-async function getArticle(slug: string) {
+async function getArticle(rawSlug: string) {
+  // Hindi/Devanagari slugs arrive URL-encoded — decode before lookup.
+  const slug = decodeURIComponent(rawSlug);
   return prisma.article.findFirst({
     where: { slug, status: "PUBLISHED" },
     include: { category: true, language: true },
@@ -67,6 +69,14 @@ export default async function ArticlePage({ params }: Params) {
           <span className="rounded-full bg-zinc-100 px-3 py-1 font-medium text-zinc-600">
             {a.language.name}
           </span>
+          {a.contentHash && (
+            <span
+              className="rounded-full bg-emerald-50 px-3 py-1 font-medium text-emerald-700"
+              title={`Digitally signed on publish. Fingerprint: ${a.contentHash.slice(0, 16)}…`}
+            >
+              ✓ Verified
+            </span>
+          )}
         </div>
 
         <h1 className="text-3xl font-bold leading-tight tracking-tight">{a.title}</h1>

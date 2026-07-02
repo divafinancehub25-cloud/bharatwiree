@@ -4,6 +4,13 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { runPipeline } from "@/lib/pipeline";
 import { newApiKey } from "@/lib/apikey";
+import { signArticle } from "@/lib/provenance";
+
+async function audit(action: string, entityType: string, entityId: string, metadata?: object) {
+  await prisma.auditLog.create({
+    data: { action, entityType, entityId, metadata: metadata ?? {} },
+  });
+}
 
 export async function addSource(formData: FormData) {
   const name = String(formData.get("name") || "").trim();
@@ -40,10 +47,29 @@ export async function runPipelineAction() {
 
 export async function approveArticle(formData: FormData) {
   const id = String(formData.get("id") || "");
+  const article = await prisma.article.findUnique({ where: { id } });
+  if (!article) return;
+
+  // Provenance: sign the article at publish time (verified-news stamp).
+  const { contentHash, manifest, signedAt } = signArticle({
+    title: article.title,
+    body: article.body,
+    rights: article.rights,
+    contentSource: article.contentSource,
+    aiModel: article.aiModel,
+  });
+
   await prisma.article.update({
     where: { id },
-    data: { status: "PUBLISHED", publishedAt: new Date() },
+    data: {
+      status: "PUBLISHED",
+      publishedAt: new Date(),
+      contentHash,
+      provenanceManifest: manifest,
+      signedAt,
+    },
   });
+  await audit("ARTICLE_PUBLISHED", "Article", id, { contentHash });
   revalidatePath("/admin/review");
   revalidatePath("/admin");
   revalidatePath("/");
@@ -55,6 +81,7 @@ export async function rejectArticle(formData: FormData) {
     where: { id },
     data: { status: "ARCHIVED" },
   });
+  await audit("ARTICLE_REJECTED", "Article", id);
   revalidatePath("/admin/review");
   revalidatePath("/admin");
 }

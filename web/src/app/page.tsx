@@ -2,12 +2,18 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { ArticleCard } from "@/components/ArticleCard";
 
-export default async function Home() {
+type Search = { searchParams: Promise<{ lang?: string }> };
+
+export default async function Home({ searchParams }: Search) {
+  const { lang } = await searchParams;
   const [categories, languages, latest] = await Promise.all([
     prisma.category.findMany({ orderBy: { name: "asc" } }),
     prisma.language.findMany({ where: { isActive: true } }),
     prisma.article.findMany({
-      where: { status: "PUBLISHED" },
+      where: {
+        status: "PUBLISHED",
+        ...(lang ? { language: { code: lang } } : {}),
+      },
       orderBy: { publishedAt: "desc" },
       take: 12,
       include: { category: true, language: true },
@@ -26,14 +32,50 @@ export default async function Home() {
               Bharat<span className="text-orange-600">Wire</span>
             </span>
           </div>
-          <Link
-            href="/admin"
-            className="rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700"
-          >
-            Admin →
-          </Link>
+          <div className="flex items-center gap-2">
+            <form action="/search" className="hidden sm:block">
+              <input
+                name="q"
+                placeholder="Search…"
+                className="w-44 rounded-full border border-zinc-300 px-4 py-1.5 text-sm"
+              />
+            </form>
+            <Link
+              href="/admin"
+              className="rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700"
+            >
+              Admin →
+            </Link>
+          </div>
         </div>
       </header>
+
+      {/* Language filter */}
+      <div className="border-b border-zinc-100">
+        <div className="mx-auto flex max-w-5xl gap-2 px-6 py-2">
+          <Link
+            href="/"
+            className={`rounded-full px-3 py-1 text-xs font-semibold ${
+              !lang ? "bg-zinc-900 text-white" : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
+            }`}
+          >
+            All
+          </Link>
+          {languages.map((l) => (
+            <Link
+              key={l.id}
+              href={`/?lang=${l.code}`}
+              className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                lang === l.code
+                  ? "bg-zinc-900 text-white"
+                  : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
+              }`}
+            >
+              {l.name}
+            </Link>
+          ))}
+        </div>
+      </div>
 
       {/* Category nav */}
       <nav className="border-b border-zinc-100 bg-zinc-50">

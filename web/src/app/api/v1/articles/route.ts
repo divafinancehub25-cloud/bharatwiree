@@ -95,6 +95,9 @@ export async function GET(req: NextRequest) {
       rights: a.rights,
       publishedAt: a.publishedAt,
       sourceUrl: a.sourceUrl,
+      // Provenance proof: fingerprint + signed manifest (authenticity for buyers)
+      contentHash: a.contentHash,
+      provenance: a.provenanceManifest,
     })),
   });
 }
