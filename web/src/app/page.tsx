@@ -41,8 +41,14 @@ export default async function Home({ searchParams }: Search) {
               />
             </form>
             <Link
+              href="/pricing"
+              className="rounded-full bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-500"
+            >
+              For Agencies · Pricing
+            </Link>
+            <Link
               href="/admin"
-              className="rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700"
+              className="hidden rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 sm:block"
             >
               Admin →
             </Link>
@@ -122,7 +128,14 @@ export default async function Home({ searchParams }: Search) {
       </main>
 
       <footer className="border-t border-zinc-100 py-8 text-center text-xs text-zinc-400">
-        BharatWire · Verified, regional-first news
+        BharatWire · Verified, regional-first news ·{" "}
+        <Link href="/pricing" className="underline hover:text-orange-600">
+          News agencies ke liye plans
+        </Link>{" "}
+        ·{" "}
+        <Link href="/partner/submit" className="underline hover:text-orange-600">
+          Journalist ho? Partner bano
+        </Link>
       </footer>
     </div>
   );

@@ -27,6 +27,8 @@ export type RewriteOutput = {
   title: string;
   excerpt: string;
   body: string;
+  metaTitle: string; // SEO: search-result headline (≤60 chars)
+  metaDescription: string; // SEO: search-result snippet (≤155 chars)
   model: string; // which model produced it (stored on the article)
 };
 
@@ -48,10 +50,12 @@ function buildPrompt(input: RewriteInput): string {
   return [
     `You are a news editor. Rewrite the news below in your OWN words as an original,`,
     `neutral article written in ${input.languageName}. Do not copy sentences.`,
-    `Return ONLY valid JSON with exactly these keys: "title", "excerpt", "body".`,
+    `Return ONLY valid JSON with exactly these keys: "title", "excerpt", "body", "metaTitle", "metaDescription".`,
     `- "title": a fresh headline`,
     `- "excerpt": one-sentence summary`,
     `- "body": 2-3 short paragraphs`,
+    `- "metaTitle": SEO title for Google search results, max 60 characters, front-load the main keyword`,
+    `- "metaDescription": SEO snippet for Google, max 155 characters, compelling and keyword-rich`,
     ``,
     `SOURCE TITLE: ${input.title}`,
     `SOURCE TEXT: ${input.content?.slice(0, 4000) ?? ""}`,
@@ -166,7 +170,12 @@ function shape(
   const title = (parsed.title || input.title).toString().trim();
   const body = (parsed.body || input.content || "").toString().trim();
   const excerpt = (parsed.excerpt || body.slice(0, 160)).toString().trim();
-  return { title, excerpt, body, model };
+  const metaTitle = (parsed.metaTitle || title).toString().trim().slice(0, 70);
+  const metaDescription = (parsed.metaDescription || excerpt)
+    .toString()
+    .trim()
+    .slice(0, 160);
+  return { title, excerpt, body, metaTitle, metaDescription, model };
 }
 
 function safeParse(s: string): Record<string, unknown> {

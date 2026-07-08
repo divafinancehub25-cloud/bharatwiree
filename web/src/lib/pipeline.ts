@@ -70,6 +70,8 @@ export async function runPipeline(): Promise<PipelineResult> {
             slug: slugify(ai.title),
             excerpt: ai.excerpt,
             body: ai.body,
+            metaTitle: ai.metaTitle,
+            metaDescription: ai.metaDescription,
             coverImage: placeholderImage(ai.title),
             imageIsAi: false, // placeholder for now
             sourceUrl,
